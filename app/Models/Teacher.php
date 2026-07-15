@@ -9,11 +9,6 @@ class Teacher extends Model
 {
     use HasFactory;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected $fillable = [
         'user_id',
         'name',
@@ -25,47 +20,60 @@ class Teacher extends Model
         'is_active',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
-    protected function casts(): array
-    {
-        return [
-            'subjects' => 'array',
-            'is_active' => 'boolean',
-        ];
-    }
+    protected $casts = [
+        'subjects' => 'array',
+        'is_active' => 'boolean',
+    ];
 
-    /**
-     * Relationship: Teacher belongs to User
-     */
+    // Relationships
     public function user()
     {
         return $this->belongsTo(User::class);
     }
 
-    /**
-     * Relationship: Teacher has assigned Class
-     */
     public function assignedClass()
     {
-        return $this->belongsTo(ClassModel::class, 'assigned_class_id');
+        return $this->belongsTo(StudentClass::class, 'assigned_class_id');
     }
 
-    /**
-     * Relationship: Teacher has many Marks (recorded)
-     */
-    public function marksRecorded()
+    public function marks()
     {
-        return $this->hasManyThrough(
-            Mark::class,
-            User::class,
-            'id',
-            'teacher_id',
-            'user_id',
-            'id'
-        );
+        return $this->hasMany(Mark::class);
+    }
+
+    public function attendance()
+    {
+        return $this->hasMany(Attendance::class, 'recorded_by');
+    }
+
+    // Scopes
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
+    }
+
+    public function scopeByClass($query, $classId)
+    {
+        return $query->where('assigned_class_id', $classId);
+    }
+
+    // Methods
+    public function getAssignedStudents()
+    {
+        return $this->assignedClass->students ?? collect();
+    }
+
+    public function addSubject($subject)
+    {
+        if (!in_array($subject, $this->subjects ?? [])) {
+            $this->subjects = array_merge($this->subjects ?? [], [$subject]);
+            $this->save();
+        }
+    }
+
+    public function removeSubject($subject)
+    {
+        $this->subjects = array_diff($this->subjects ?? [], [$subject]);
+        $this->save();
     }
 }

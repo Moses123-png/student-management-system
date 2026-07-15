@@ -9,11 +9,8 @@ class CommunityWorker extends Model
 {
     use HasFactory;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
+    protected $table = 'community_workers';
+
     protected $fillable = [
         'name',
         'phone',
@@ -23,23 +20,41 @@ class CommunityWorker extends Model
         'is_active',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
-    protected function casts(): array
-    {
-        return [
-            'is_active' => 'boolean',
-        ];
-    }
+    protected $casts = [
+        'is_active' => 'boolean',
+    ];
 
-    /**
-     * Relationship: Community Worker has many Students
-     */
+    // Relationships
     public function students()
     {
-        return $this->hasMany(Student::class, 'community_worker_id');
+        return $this->hasMany(Student::class);
+    }
+
+    // Scopes
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
+    }
+
+    public function scopeByZone($query, $zone)
+    {
+        return $query->where('zone', $zone);
+    }
+
+    // Methods
+    public function getStudentCount()
+    {
+        return $this->students()->count();
+    }
+
+    public static function getZones()
+    {
+        return [
+            'Nansana East',
+            'Nansana West',
+            'Nansana North',
+            'Nansana South',
+            'Nansana Central',
+        ];
     }
 }

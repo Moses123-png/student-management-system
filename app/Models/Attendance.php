@@ -9,11 +9,6 @@ class Attendance extends Model
 {
     use HasFactory;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected $fillable = [
         'student_id',
         'class_id',
@@ -23,39 +18,55 @@ class Attendance extends Model
         'recorded_by',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
-    protected function casts(): array
-    {
-        return [
-            'attendance_date' => 'date',
-        ];
-    }
+    protected $casts = [
+        'attendance_date' => 'date',
+    ];
 
-    /**
-     * Relationship: Attendance belongs to Student
-     */
+    // Relationships
     public function student()
     {
         return $this->belongsTo(Student::class);
     }
 
-    /**
-     * Relationship: Attendance belongs to Class
-     */
     public function class()
     {
-        return $this->belongsTo(ClassModel::class, 'class_id');
+        return $this->belongsTo(StudentClass::class, 'class_id');
     }
 
-    /**
-     * Relationship: Attendance recorded by User
-     */
-    public function recordedBy()
+    public function recordedByTeacher()
     {
-        return $this->belongsTo(User::class, 'recorded_by');
+        return $this->belongsTo(Teacher::class, 'recorded_by');
+    }
+
+    // Scopes
+    public function scopeByDate($query, $date)
+    {
+        return $query->where('attendance_date', $date);
+    }
+
+    public function scopeByStatus($query, $status)
+    {
+        return $query->where('status', $status);
+    }
+
+    public function scopePresent($query)
+    {
+        return $query->where('status', 'Present');
+    }
+
+    public function scopeAbsent($query)
+    {
+        return $query->where('status', 'Absent');
+    }
+
+    // Methods
+    public static function getStatuses()
+    {
+        return [
+            'Present',
+            'Absent',
+            'Excused',
+            'Late',
+        ];
     }
 }

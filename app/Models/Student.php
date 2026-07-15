@@ -4,17 +4,12 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
+use Carbon\Carbon;
 
 class Student extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected $fillable = [
         'student_id',
         'surname',
@@ -30,145 +25,131 @@ class Student extends Model
         'zone',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
-    protected function casts(): array
-    {
-        return [
-            'date_of_birth' => 'date',
-            'entry_year' => 'year',
-        ];
-    }
+    protected $casts = [
+        'date_of_birth' => 'date',
+        'entry_year' => 'year',
+    ];
 
-    /**
-     * Get student's full name
-     */
-    public function getFullNameAttribute()
-    {
-        return $this->surname . ' ' . $this->other_names;
-    }
-
-    /**
-     * Get student's age from DOB
-     */
-    public function getAgeAttribute()
-    {
-        return $this->date_of_birth->diffInYears(now());
-    }
-
-    /**
-     * Relationship: Student belongs to Class
-     */
+    // Relationships
     public function class()
     {
-        return $this->belongsTo(ClassModel::class, 'class_id');
+        return $this->belongsTo(StudentClass::class, 'class_id');
     }
 
-    /**
-     * Relationship: Student belongs to Guardian
-     */
     public function guardian()
     {
         return $this->belongsTo(Guardian::class);
     }
 
-    /**
-     * Relationship: Student belongs to Community Worker
-     */
     public function communityWorker()
     {
-        return $this->belongsTo(CommunityWorker::class, 'community_worker_id');
+        return $this->belongsTo(CommunityWorker::class);
     }
 
-    /**
-     * Relationship: Student has many Marks
-     */
     public function marks()
     {
         return $this->hasMany(Mark::class);
     }
 
-    /**
-     * Relationship: Student has one Scholarship
-     */
-    public function scholarship()
+    public function scholarships()
     {
-        return $this->hasOne(Scholarship::class);
+        return $this->hasMany(Scholarship::class);
     }
 
-    /**
-     * Relationship: Student has many Attendance records
-     */
     public function attendance()
     {
         return $this->hasMany(Attendance::class);
     }
 
-    /**
-     * Relationship: Student has many Class Promotions
-     */
-    public function promotions()
+    public function classPromotions()
     {
         return $this->hasMany(ClassPromotion::class);
     }
 
-    /**
-     * Relationship: Student has one Graduate record
-     */
     public function graduate()
     {
         return $this->hasOne(Graduate::class);
     }
 
-    /**
-     * Relationship: Student has many Report Cards
-     */
     public function reportCards()
     {
         return $this->hasMany(ReportCard::class);
     }
 
-    /**
-     * Get marks for specific subject and term
-     */
-    public function getMarksBySubjectAndTerm($subject, $term, $year = null)
+    // Accessors
+    public function getFullNameAttribute()
     {
-        $year = $year ?? now()->year;
+        return "{$this->surname} {$this->other_names}";
+    }
+
+    public function getAgeAttribute()
+    {
+        return $this->date_of_birth->age;
+    }
+
+    // Scopes
+    public function scopeActive($query)
+    {
+        return $query->where('status', 'Active');
+    }
+
+    public function scopeGraduated($query)
+    {
+        return $query->where('status', 'Graduated');
+    }
+
+    public function scopeDroppedOut($query)
+    {
+        return $query->where('status', 'Dropped Out');
+    }
+
+    public function scopeByClass($query, $classId)
+    {
+        return $query->where('class_id', $classId);
+    }
+
+    public function scopeByZone($query, $zone)
+    {
+        return $query->where('zone', $zone);
+    }
+
+    // Methods
+    public function getAverageMarks()
+    {
         return $this->marks()
-            ->where('subject', $subject)
-            ->where('term', $term)
-            ->where('academic_year', $year)
+            ->selectRaw('AVG(total_score) as average')
+            ->pluck('average')
             ->first();
     }
 
-    /**
-     * Get all marks for a specific year and term
-     */
-    public function getTermMarks($term, $year = null)
+    public function getCurrentClass()
     {
-        $year = $year ?? now()->year;
-        return $this->marks()
-            ->where('term', $term)
-            ->where('academic_year', $year)
-            ->get();
+        return $this->class;
     }
 
-    /**
-     * Check if student is graduated
-     */
-    public function isGraduated()
+    public function hasScholarship()
     {
-        return $this->status === 'Graduated' || $this->graduate()->exists();
+        return $this->scholarships()
+            ->where('status', 'Active')
+            ->exists();
     }
 
-    /**
-     * Get student's current class level
-     */
-    public function getCurrentClassLevel()
+    public function getAttendancePercentage($term = null, $year = null)
     {
-        return $this->class->class_name ?? null;
+        $query = $this->attendance();
+        
+        if ($term) {
+            $query->where('term', $term);
+        }
+        
+        if ($year) {
+            $query->where('academic_year', $year);
+        }
+
+        $total = $query->count();
+        if ($total === 0) return 0;
+
+        $present = $query->where('status', 'Present')->count();
+        return round(($present / $total) * 100, 2);
     }
 }

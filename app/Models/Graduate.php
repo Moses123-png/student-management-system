@@ -9,11 +9,8 @@ class Graduate extends Model
 {
     use HasFactory;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
+    protected $table = 'graduates';
+
     protected $fillable = [
         'student_id',
         'graduation_year',
@@ -25,25 +22,42 @@ class Graduate extends Model
         'diploma_path',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
-    protected function casts(): array
-    {
-        return [
-            'graduation_year' => 'year',
-            'graduation_date' => 'date',
-            'scholarship_received' => 'boolean',
-        ];
-    }
+    protected $casts = [
+        'graduation_year' => 'year',
+        'graduation_date' => 'date',
+        'scholarship_received' => 'boolean',
+    ];
 
-    /**
-     * Relationship: Graduate belongs to Student
-     */
+    // Relationships
     public function student()
     {
         return $this->belongsTo(Student::class);
+    }
+
+    // Scopes
+    public function scopeByYear($query, $year)
+    {
+        return $query->where('graduation_year', $year);
+    }
+
+    public function scopeByAchievement($query, $level)
+    {
+        return $query->where('achievement_level', $level);
+    }
+
+    public function scopeWithScholarship($query)
+    {
+        return $query->where('scholarship_received', true);
+    }
+
+    // Methods
+    public static function getAchievementLevels()
+    {
+        return [
+            'Excellent',
+            'Good',
+            'Average',
+            'Below Average',
+        ];
     }
 }

@@ -9,11 +9,6 @@ class Mark extends Model
 {
     use HasFactory;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected $fillable = [
         'student_id',
         'subject',
@@ -28,63 +23,63 @@ class Mark extends Model
         'teacher_id',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
-    protected function casts(): array
+    protected $casts = [
+        'academic_year' => 'year',
+    ];
+
+    // Relationships
+    public function student()
     {
-        return [
-            'academic_year' => 'year',
-            'total_score' => 'float',
-        ];
+        return $this->belongsTo(Student::class);
     }
 
-    /**
-     * Boot the model
-     */
-    protected static function boot()
+    public function teacher()
     {
-        parent::boot();
-
-        static::creating(function ($mark) {
-            $mark->total_score = $mark->calculateTotalScore();
-            $mark->grade = $mark->calculateGrade();
-        });
-
-        static::updating(function ($mark) {
-            $mark->total_score = $mark->calculateTotalScore();
-            $mark->grade = $mark->calculateGrade();
-        });
+        return $this->belongsTo(Teacher::class);
     }
 
-    /**
-     * Calculate total score
-     */
-    public function calculateTotalScore()
+    // Scopes
+    public function scopeByStudent($query, $studentId)
     {
-        $scores = [
-            $this->test_1_score ?? 0,
-            $this->test_2_score ?? 0,
-            $this->assignment_score ?? 0,
-            $this->exam_score ?? 0,
-        ];
-
-        $count = count(array_filter($scores));
-        if ($count === 0) return null;
-
-        return array_sum($scores) / 4;
+        return $query->where('student_id', $studentId);
     }
 
-    /**
-     * Calculate grade based on total score
-     */
+    public function scopeByYear($query, $year)
+    {
+        return $query->where('academic_year', $year);
+    }
+
+    public function scopeByTerm($query, $term)
+    {
+        return $query->where('term', $term);
+    }
+
+    public function scopeBySubject($query, $subject)
+    {
+        return $query->where('subject', $subject);
+    }
+
+    public function scopeByGrade($query, $grade)
+    {
+        return $query->where('grade', $grade);
+    }
+
+    // Methods
+    public function calculateTotal()
+    {
+        $scores = array_filter([
+            $this->test_1_score,
+            $this->test_2_score,
+            $this->assignment_score,
+            $this->exam_score,
+        ]);
+
+        return count($scores) > 0 ? round(array_sum($scores) / count($scores), 2) : 0;
+    }
+
     public function calculateGrade()
     {
         $total = $this->total_score;
-
-        if ($total === null) return null;
 
         if ($total >= 90) return 'A';
         if ($total >= 80) return 'B';
@@ -94,19 +89,29 @@ class Mark extends Model
         return 'F';
     }
 
-    /**
-     * Relationship: Mark belongs to Student
-     */
-    public function student()
+    public function getGradeDescription()
     {
-        return $this->belongsTo(Student::class);
+        $descriptions = [
+            'A' => 'Excellent',
+            'B' => 'Good',
+            'C' => 'Very Good',
+            'D' => 'Satisfactory',
+            'E' => 'Pass',
+            'F' => 'Fail',
+        ];
+
+        return $descriptions[$this->grade] ?? 'Unknown';
     }
 
-    /**
-     * Relationship: Mark belongs to Teacher
-     */
-    public function teacher()
+    public static function getSubjects()
     {
-        return $this->belongsTo(User::class, 'teacher_id');
+        return [
+            'Mathematics',
+            'English',
+            'Science',
+            'Social Studies',
+            'Religious Education',
+            'Local Language',
+        ];
     }
 }

@@ -9,11 +9,6 @@ class Guardian extends Model
 {
     use HasFactory;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected $fillable = [
         'name',
         'phone',
@@ -23,11 +18,42 @@ class Guardian extends Model
         'address',
     ];
 
-    /**
-     * Relationship: Guardian has many Students
-     */
+    // Relationships
     public function students()
     {
         return $this->hasMany(Student::class);
+    }
+
+    // Scopes
+    public function scopeByRelationship($query, $relationship)
+    {
+        return $query->where('relationship', $relationship);
+    }
+
+    public function scopeByOccupation($query, $occupation)
+    {
+        return $query->where('occupation', $occupation);
+    }
+
+    // Methods
+    public function getStudentCount()
+    {
+        return $this->students()->count();
+    }
+
+    public static function getRelationships()
+    {
+        return [
+            'Father',
+            'Mother',
+            'Uncle',
+            'Aunt',
+            'Brother',
+            'Sister',
+            'Grandfather',
+            'Grandmother',
+            'Cousin',
+            'Other',
+        ];
     }
 }

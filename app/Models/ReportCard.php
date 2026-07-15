@@ -9,11 +9,6 @@ class ReportCard extends Model
 {
     use HasFactory;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected $fillable = [
         'student_id',
         'academic_year',
@@ -27,40 +22,81 @@ class ReportCard extends Model
         'pdf_path',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
-    protected function casts(): array
-    {
-        return [
-            'academic_year' => 'year',
-            'generated_at' => 'datetime',
-        ];
-    }
+    protected $casts = [
+        'academic_year' => 'year',
+        'generated_at' => 'datetime',
+    ];
 
-    /**
-     * Relationship: Report Card belongs to Student
-     */
+    // Relationships
     public function student()
     {
         return $this->belongsTo(Student::class);
     }
 
-    /**
-     * Relationship: Report Card belongs to Class
-     */
     public function class()
     {
-        return $this->belongsTo(ClassModel::class, 'class_id');
+        return $this->belongsTo(StudentClass::class, 'class_id');
     }
 
-    /**
-     * Get all marks for this report card
-     */
-    public function getMarks()
+    // Scopes
+    public function scopeByYear($query, $year)
     {
-        return $this->student->getTermMarks($this->term, $this->academic_year);
+        return $query->where('academic_year', $year);
+    }
+
+    public function scopeByTerm($query, $term)
+    {
+        return $query->where('term', $term);
+    }
+
+    public function scopeByClass($query, $classId)
+    {
+        return $query->where('class_id', $classId);
+    }
+
+    // Methods
+    public function getStudentMarks()
+    {
+        return $this->student->marks()
+            ->where('academic_year', $this->academic_year)
+            ->where('term', $this->term)
+            ->get();
+    }
+
+    public function getTotalPoints()
+    {
+        return $this->getStudentMarks()->sum('total_score');
+    }
+
+    public function getOverallGrade()
+    {
+        $average = $this->getStudentMarks()->avg('total_score');
+        
+        if ($average >= 90) return 'A';
+        if ($average >= 80) return 'B';
+        if ($average >= 70) return 'C';
+        if ($average >= 60) return 'D';
+        if ($average >= 50) return 'E';
+        return 'F';
+    }
+
+    public function getClassRanking()
+    {
+        $studentMarks = $this->student->marks()
+            ->where('academic_year', $this->academic_year)
+            ->where('term', $this->term)
+            ->avg('total_score');
+
+        $totalStudents = $this->class->students->count();
+        
+        $ranking = $this->class->students()
+            ->join('marks', 'students.id', '=', 'marks.student_id')
+            ->where('marks.academic_year', $this->academic_year)
+            ->where('marks.term', $this->term)
+            ->selectRaw('COUNT(DISTINCT students.id) as rank')
+            ->where('marks.total_score', '>', $studentMarks)
+            ->first();
+
+        return ($ranking->rank ?? 0) + 1;
     }
 }
