@@ -4,121 +4,149 @@ namespace App\Http\Controllers;
 
 use App\Models\Scholarship;
 use App\Models\Student;
+use App\Models\AuditLog;
 use Illuminate\Http\Request;
 
 class ScholarshipController extends Controller
 {
-    /**
-     * Display all scholarships
-     */
     public function index(Request $request)
     {
-        $query = Scholarship::with('student');
+        $query = Scholarship::query();
+
+        if ($request->filled('student_id')) {
+            $query->where('student_id', $request->student_id);
+        }
 
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
 
-        if ($request->filled('sponsor')) {
-            $query->where('sponsor_name', 'like', '%' . $request->sponsor . '%');
+        if ($request->filled('sponsor_name')) {
+            $query->where('sponsor_name', 'like', "%{$request->sponsor_name}%");
         }
 
-        $scholarships = $query->paginate(20);
-        $sponsors = Scholarship::where('has_scholarship', true)
-                              ->distinct()
-                              ->pluck('sponsor_name');
+        if ($request->filled('type')) {
+            $query->where('scholarship_type', $request->type);
+        }
 
-        return view('admin.scholarships.index', compact('scholarships', 'sponsors'));
+        $scholarships = $query->with('student')
+            ->paginate(20);
+
+        return view('admin.scholarships.index', [
+            'scholarships' => $scholarships,
+            'types' => Scholarship::getTypes(),
+            'statuses' => Scholarship::getStatuses(),
+        ]);
     }
 
-    /**
-     * Show scholarship form
-     */
     public function create()
     {
-        $students = Student::where('status', 'Active')->get();
-        return view('admin.scholarships.create', compact('students'));
+        return view('admin.scholarships.create', [
+            'students' => Student::where('status', 'Active')->get(),
+            'types' => Scholarship::getTypes(),
+            'statuses' => Scholarship::getStatuses(),
+            'currencies' => Scholarship::getCurrencies(),
+            'years' => range(date('Y'), date('Y') + 10),
+        ]);
     }
 
-    /**
-     * Store scholarship
-     */
     public function store(Request $request)
     {
         $validated = $request->validate([
             'student_id' => 'required|exists:students,id',
-            'has_scholarship' => 'required|boolean',
-            'scholarship_type' => 'nullable|string',
-            'sponsor_name' => 'nullable|string',
-            'sponsor_contact' => 'nullable|string',
-            'amount' => 'nullable|numeric',
-            'currency' => 'nullable|string|max:3',
-            'start_year' => 'nullable|integer',
-            'end_year' => 'nullable|integer',
-            'status' => 'required|in:Active,Completed,Pending,Cancelled',
+            'has_scholarship' => 'boolean',
+            'scholarship_type' => 'required|in:' . implode(',', Scholarship::getTypes()),
+            'sponsor_name' => 'required|string|max:150',
+            'sponsor_contact' => 'nullable|string|max:100',
+            'amount' => 'required|numeric|min:0',
+            'currency' => 'required|in:UGX,USD,EUR,GBP',
+            'start_year' => 'required|integer',
+            'end_year' => 'required|integer|gte:start_year',
+            'status' => 'required|in:' . implode(',', Scholarship::getStatuses()),
+            'certificate' => 'nullable|file|max:2048',
             'notes' => 'nullable|string',
         ]);
 
-        Scholarship::create($validated);
+        $validated['has_scholarship'] = true;
 
-        return redirect()->route('admin.scholarships.index')
-                        ->with('success', 'Scholarship created successfully!');
+        if ($request->hasFile('certificate')) {
+            $path = $request->file('certificate')->store('scholarships', 'public');
+            $validated['certificate_path'] = $path;
+        }
+
+        $scholarship = Scholarship::create($validated);
+        AuditLog::log(auth()->user(), 'CREATE', 'Scholarship', $scholarship->id, [], $validated);
+
+        return redirect()->route('admin.scholarships.show', $scholarship)
+            ->with('success', 'Scholarship created successfully');
     }
 
-    /**
-     * Edit scholarship
-     */
+    public function show(Scholarship $scholarship)
+    {
+        return view('admin.scholarships.show', [
+            'scholarship' => $scholarship->load('student'),
+        ]);
+    }
+
     public function edit(Scholarship $scholarship)
     {
-        $students = Student::where('status', 'Active')->get();
-        return view('admin.scholarships.edit', compact('scholarship', 'students'));
+        return view('admin.scholarships.edit', [
+            'scholarship' => $scholarship,
+            'types' => Scholarship::getTypes(),
+            'statuses' => Scholarship::getStatuses(),
+            'currencies' => Scholarship::getCurrencies(),
+            'years' => range(date('Y'), date('Y') + 10),
+        ]);
     }
 
-    /**
-     * Update scholarship
-     */
     public function update(Request $request, Scholarship $scholarship)
     {
         $validated = $request->validate([
-            'has_scholarship' => 'required|boolean',
-            'scholarship_type' => 'nullable|string',
-            'sponsor_name' => 'nullable|string',
-            'sponsor_contact' => 'nullable|string',
-            'amount' => 'nullable|numeric',
-            'currency' => 'nullable|string|max:3',
-            'start_year' => 'nullable|integer',
-            'end_year' => 'nullable|integer',
-            'status' => 'required|in:Active,Completed,Pending,Cancelled',
+            'scholarship_type' => 'required|in:' . implode(',', Scholarship::getTypes()),
+            'sponsor_name' => 'required|string|max:150',
+            'sponsor_contact' => 'nullable|string|max:100',
+            'amount' => 'required|numeric|min:0',
+            'currency' => 'required|in:UGX,USD,EUR,GBP',
+            'start_year' => 'required|integer',
+            'end_year' => 'required|integer|gte:start_year',
+            'status' => 'required|in:' . implode(',', Scholarship::getStatuses()),
             'notes' => 'nullable|string',
         ]);
 
+        $oldValues = $scholarship->toArray();
         $scholarship->update($validated);
+        AuditLog::log(auth()->user(), 'UPDATE', 'Scholarship', $scholarship->id, $oldValues, $validated);
 
-        return redirect()->route('admin.scholarships.index')
-                        ->with('success', 'Scholarship updated successfully!');
+        return redirect()->route('admin.scholarships.show', $scholarship)
+            ->with('success', 'Scholarship updated successfully');
     }
 
-    /**
-     * Delete scholarship
-     */
     public function destroy(Scholarship $scholarship)
     {
         $scholarship->delete();
+        AuditLog::log(auth()->user(), 'DELETE', 'Scholarship', $scholarship->id);
 
         return redirect()->route('admin.scholarships.index')
-                        ->with('success', 'Scholarship deleted successfully!');
+            ->with('success', 'Scholarship deleted successfully');
     }
 
-    /**
-     * Generate scholarship report
-     */
-    public function report()
+    public function report(Request $request)
     {
-        $scholarships = Scholarship::where('has_scholarship', true)
-                                  ->with('student')
-                                  ->get()
-                                  ->groupBy('sponsor_name');
+        $query = Scholarship::where('status', 'Active');
 
-        return view('admin.scholarships.report', compact('scholarships'));
+        if ($request->filled('type')) {
+            $query->where('scholarship_type', $request->type);
+        }
+
+        if ($request->filled('sponsor_name')) {
+            $query->where('sponsor_name', 'like', "%{$request->sponsor_name}%");
+        }
+
+        $scholarships = $query->with('student')->get();
+
+        return view('admin.scholarships.report', [
+            'scholarships' => $scholarships,
+            'types' => Scholarship::getTypes(),
+        ]);
     }
 }

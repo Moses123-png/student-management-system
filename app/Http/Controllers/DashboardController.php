@@ -2,62 +2,88 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\User;
+use App\Models\Student;
+use App\Models\Mark;
+use App\Models\Scholarship;
+use App\Models\ClassPromotion;
+use App\Models\Graduate;
+use App\Models\AuditLog;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
 
 class DashboardController extends Controller
 {
-    /**
-     * Show admin dashboard
-     */
-    public function adminDashboard()
-    {
-        $stats = [
-            'total_students' => \App\Models\Student::where('status', 'Active')->count(),
-            'total_teachers' => User::where('role', 'teacher')->where('is_active', true)->count(),
-            'total_classes' => \App\Models\ClassModel::where('is_active', true)->count(),
-            'total_graduates' => \App\Models\Graduate::whereYear('graduation_year', now()->year)->count(),
-        ];
-
-        $recentStudents = \App\Models\Student::latest()->take(10)->get();
-        $scholarships = \App\Models\Scholarship::where('status', 'Active')->count();
-        $graduates = \App\Models\Graduate::latest()->take(10)->get();
-
-        return view('admin.dashboard', compact('stats', 'recentStudents', 'scholarships', 'graduates'));
-    }
-
-    /**
-     * Show teacher dashboard
-     */
-    public function teacherDashboard()
-    {
-        $teacher = auth()->user()->teacher;
-        $assignedClass = $teacher->assignedClass;
-        $students = [];
-        $stats = [];
-
-        if ($assignedClass) {
-            $students = \App\Models\Student::where('class_id', $assignedClass->id)
-                                           ->where('status', 'Active')
-                                           ->get();
-            $stats = [
-                'total_students' => $students->count(),
-                'class_name' => $assignedClass->class_name,
-                'academic_year' => $assignedClass->academic_year,
-            ];
-        }
-
-        return view('teacher.dashboard', compact('stats', 'students', 'assignedClass'));
-    }
-
-    /**
-     * Show guardian dashboard
-     */
     public function dashboard()
     {
         $user = auth()->user();
-        // Guardian can view their children's records
-        return view('dashboard');
+
+        if ($user->isAdmin()) {
+            return $this->adminDashboard();
+        } elseif ($user->isTeacher()) {
+            return $this->teacherDashboard();
+        } elseif ($user->isGuardian()) {
+            return $this->guardianDashboard();
+        }
+
+        return redirect('/');
+    }
+
+    public function adminDashboard()
+    {
+        $totalStudents = Student::where('status', 'Active')->count();
+        $totalGraduates = Graduate::count();
+        $activeScholarships = Scholarship::where('status', 'Active')->count();
+        $recentAuditLogs = AuditLog::recent()->limit(10)->get();
+
+        $studentsByStatus = [
+            'Active' => Student::where('status', 'Active')->count(),
+            'Graduated' => Student::where('status', 'Graduated')->count(),
+            'Dropped Out' => Student::where('status', 'Dropped Out')->count(),
+        ];
+
+        $marksDistribution = Mark::selectRaw('grade, count(*) as count')
+            ->groupBy('grade')
+            ->get();
+
+        $scholarshipsByType = Scholarship::selectRaw('scholarship_type, count(*) as count')
+            ->where('status', 'Active')
+            ->groupBy('scholarship_type')
+            ->get();
+
+        return view('admin.dashboard', [
+            'totalStudents' => $totalStudents,
+            'totalGraduates' => $totalGraduates,
+            'activeScholarships' => $activeScholarships,
+            'studentsByStatus' => $studentsByStatus,
+            'marksDistribution' => $marksDistribution,
+            'scholarshipsByType' => $scholarshipsByType,
+            'recentAuditLogs' => $recentAuditLogs,
+        ]);
+    }
+
+    public function teacherDashboard()
+    {
+        $teacher = auth()->user()->teacher;
+        $class = $teacher->assignedClass;
+        $students = $class->students()->count();
+        $averagePerformance = $class->getAveragePerformance();
+
+        $recentMarks = Mark::where('teacher_id', $teacher->id)
+            ->latest()
+            ->limit(10)
+            ->get();
+
+        return view('teacher.dashboard', [
+            'teacher' => $teacher,
+            'class' => $class,
+            'studentCount' => $students,
+            'averagePerformance' => $averagePerformance,
+            'recentMarks' => $recentMarks,
+        ]);
+    }
+
+    public function guardianDashboard()
+    {
+        // Guardian portal functionality
+        return view('guardian.dashboard');
     }
 }

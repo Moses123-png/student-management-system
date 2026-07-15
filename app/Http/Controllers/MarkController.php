@@ -4,18 +4,15 @@ namespace App\Http\Controllers;
 
 use App\Models\Mark;
 use App\Models\Student;
-use App\Models\ClassModel;
-use App\Models\Attendance;
+use App\Models\StudentClass;
 use App\Models\ReportCard;
+use App\Models\AuditLog;
 use Illuminate\Http\Request;
 use PDF;
 
 class MarkController extends Controller
 {
-    /**
-     * Display marks for a student
-     */
-    public function show(Request $request)
+    public function index(Request $request)
     {
         $query = Mark::query();
 
@@ -23,166 +20,249 @@ class MarkController extends Controller
             $query->where('student_id', $request->student_id);
         }
 
-        if ($request->filled('year')) {
-            $query->where('academic_year', $request->year);
+        if ($request->filled('subject')) {
+            $query->where('subject', $request->subject);
+        }
+
+        if ($request->filled('academic_year')) {
+            $query->where('academic_year', $request->academic_year);
         }
 
         if ($request->filled('term')) {
             $query->where('term', $request->term);
         }
 
-        $marks = $query->with('student', 'teacher')->paginate(20);
+        $marks = $query->with(['student', 'teacher'])
+            ->paginate(20);
 
-        return view('admin.marks.index', compact('marks'));
+        return view('admin.marks.index', [
+            'marks' => $marks,
+            'subjects' => Mark::getSubjects(),
+            'years' => range(date('Y') - 5, date('Y')),
+            'terms' => [1, 2, 3],
+        ]);
     }
 
-    /**
-     * Show mark entry form
-     */
-    public function entryForm()
+    public function create()
     {
-        $classes = ClassModel::where('is_active', true)->get();
-        $students = [];
-
-        return view('teacher.marks.entry', compact('classes', 'students'));
+        return view('admin.marks.create', [
+            'students' => Student::where('status', 'Active')->get(),
+            'subjects' => Mark::getSubjects(),
+            'years' => range(date('Y') - 5, date('Y')),
+            'terms' => [1, 2, 3],
+        ]);
     }
 
-    /**
-     * Store marks in bulk for a class and term
-     */
-    public function storeBatch(Request $request)
+    public function store(Request $request)
     {
         $validated = $request->validate([
-            'class_id' => 'required|exists:classes,id',
-            'term' => 'required|in:1,2,3',
+            'student_id' => 'required|exists:students,id',
+            'subject' => 'required|in:' . implode(',', Mark::getSubjects()),
             'academic_year' => 'required|integer',
-            'marks' => 'required|array',
+            'term' => 'required|in:1,2,3',
+            'test_1_score' => 'nullable|numeric|min:0|max:100',
+            'test_2_score' => 'nullable|numeric|min:0|max:100',
+            'assignment_score' => 'nullable|numeric|min:0|max:100',
+            'exam_score' => 'nullable|numeric|min:0|max:100',
         ]);
 
-        $marks = $request->marks;
-        $successCount = 0;
+        // Check for duplicate
+        $existing = Mark::where('student_id', $validated['student_id'])
+            ->where('subject', $validated['subject'])
+            ->where('academic_year', $validated['academic_year'])
+            ->where('term', $validated['term'])
+            ->first();
 
-        foreach ($marks as $studentId => $subjects) {
-            foreach ($subjects as $subject => $scores) {
-                $mark = Mark::updateOrCreate(
-                    [
-                        'student_id' => $studentId,
-                        'subject' => $subject,
-                        'academic_year' => $validated['academic_year'],
-                        'term' => $validated['term'],
-                    ],
-                    [
-                        'test_1_score' => $scores['test_1'] ?? null,
-                        'test_2_score' => $scores['test_2'] ?? null,
-                        'assignment_score' => $scores['assignment'] ?? null,
-                        'exam_score' => $scores['exam'] ?? null,
-                        'teacher_id' => auth()->id(),
-                    ]
-                );
-                $successCount++;
-            }
+        if ($existing) {
+            return back()->with('error', 'Mark already exists for this student, subject, and term');
         }
 
-        return redirect()->back()->with('success', "$successCount marks saved successfully!");
+        $mark = new Mark($validated);
+        $mark->total_score = $mark->calculateTotal();
+        $mark->grade = $mark->calculateGrade();
+        $mark->teacher_id = auth()->user()->teacher->id ?? null;
+        $mark->save();
+
+        AuditLog::log(auth()->user(), 'CREATE', 'Mark', $mark->id, [], $validated);
+
+        return redirect()->route('admin.marks.show', $mark)
+            ->with('success', 'Mark recorded successfully');
     }
 
-    /**
-     * Show marks report
-     */
-    public function report(Request $request, $year = null, $term = null)
+    public function show(Mark $mark)
     {
-        $year = $year ?? now()->year;
-        $term = $term ?? 1;
-
-        $marks = Mark::where('academic_year', $year)
-                      ->where('term', $term)
-                      ->with('student', 'teacher')
-                      ->get();
-
-        return view('admin.marks.report', compact('marks', 'year', 'term'));
+        return view('admin.marks.show', [
+            'mark' => $mark->load(['student', 'teacher']),
+        ]);
     }
 
-    /**
-     * Show student marks
-     */
-    public function showStudentMarks(Student $student)
+    public function edit(Mark $mark)
     {
-        $marks = $student->marks()->with('teacher')->get();
-        $termMarks = $student->getTermMarks(1, now()->year);
-
-        return view('teacher.marks.show', compact('student', 'marks', 'termMarks'));
+        return view('admin.marks.edit', [
+            'mark' => $mark,
+            'subjects' => Mark::getSubjects(),
+        ]);
     }
 
-    /**
-     * Generate report card
-     */
-    public function generateReportCard(Request $request, Student $student, $year = null, $term = null)
+    public function update(Request $request, Mark $mark)
     {
-        $year = $year ?? now()->year;
-        $term = $term ?? 1;
+        $validated = $request->validate([
+            'test_1_score' => 'nullable|numeric|min:0|max:100',
+            'test_2_score' => 'nullable|numeric|min:0|max:100',
+            'assignment_score' => 'nullable|numeric|min:0|max:100',
+            'exam_score' => 'nullable|numeric|min:0|max:100',
+        ]);
 
-        $marks = Mark::where('student_id', $student->id)
-                      ->where('academic_year', $year)
-                      ->where('term', $term)
-                      ->get();
+        $oldValues = $mark->toArray();
 
-        $reportCard = ReportCard::where('student_id', $student->id)
-                                ->where('academic_year', $year)
-                                ->where('term', $term)
-                                ->first();
+        $mark->fill($validated);
+        $mark->total_score = $mark->calculateTotal();
+        $mark->grade = $mark->calculateGrade();
+        $mark->save();
 
-        if ($request->format === 'pdf') {
-            $pdf = PDF::loadView('reports.report-card', compact('student', 'marks', 'year', 'term', 'reportCard'));
-            return $pdf->download('report-card-' . $student->student_id . '.pdf');
-        }
+        AuditLog::log(auth()->user(), 'UPDATE', 'Mark', $mark->id, $oldValues, $validated);
 
-        return view('reports.report-card', compact('student', 'marks', 'year', 'term', 'reportCard'));
+        return redirect()->route('admin.marks.show', $mark)
+            ->with('success', 'Mark updated successfully');
     }
 
-    /**
-     * List all report cards
-     */
-    public function reportCards()
+    public function destroy(Mark $mark)
     {
-        $reportCards = ReportCard::with('student', 'class')->paginate(20);
-        return view('admin.report-cards.index', compact('reportCards'));
+        $mark->delete();
+        AuditLog::log(auth()->user(), 'DELETE', 'Mark', $mark->id);
+
+        return redirect()->route('admin.marks.index')
+            ->with('success', 'Mark deleted successfully');
     }
 
-    /**
-     * Download report card PDF
-     */
-    public function downloadReportCard($id)
-    {
-        $reportCard = ReportCard::findOrFail($id);
-        $student = $reportCard->student;
-        $marks = $reportCard->getMarks();
-
-        $pdf = PDF::loadView('reports.report-card', compact('student', 'marks', 'reportCard'));
-        return $pdf->download('report-card-' . $student->student_id . '.pdf');
-    }
-
-    /**
-     * Record attendance
-     */
-    public function recordAttendance(Request $request)
+    public function bulkEntry(Request $request)
     {
         $validated = $request->validate([
             'class_id' => 'required|exists:classes,id',
-            'attendance_date' => 'required|date',
-            'attendance' => 'required|array',
+            'subject' => 'required|in:' . implode(',', Mark::getSubjects()),
+            'academic_year' => 'required|integer',
+            'term' => 'required|in:1,2,3',
+            'marks' => 'required|array',
+            'marks.*.student_id' => 'required|exists:students,id',
+            'marks.*.score' => 'required|numeric|min:0|max:100',
         ]);
 
-        foreach ($request->attendance as $studentId => $status) {
-            Attendance::updateOrCreate(
+        $created = 0;
+        foreach ($validated['marks'] as $markData) {
+            Mark::updateOrCreate(
                 [
-                    'student_id' => $studentId,
-                    'class_id' => $validated['class_id'],
-                    'attendance_date' => $validated['attendance_date'],
+                    'student_id' => $markData['student_id'],
+                    'subject' => $validated['subject'],
+                    'academic_year' => $validated['academic_year'],
+                    'term' => $validated['term'],
                 ],
-                ['status' => $status, 'recorded_by' => auth()->id()]
+                [
+                    'exam_score' => $markData['score'],
+                    'total_score' => $markData['score'],
+                    'grade' => $this->calculateGrade($markData['score']),
+                    'teacher_id' => auth()->user()->teacher->id ?? null,
+                ]
             );
+            $created++;
         }
 
-        return redirect()->back()->with('success', 'Attendance recorded successfully!');
+        return back()->with('success', "{$created} marks recorded successfully");
+    }
+
+    public function report(Request $request, $year, $term)
+    {
+        $marks = Mark::where('academic_year', $year)
+            ->where('term', $term)
+            ->with('student', 'teacher')
+            ->orderBy('subject')
+            ->get();
+
+        return view('admin.marks.report', [
+            'marks' => $marks,
+            'year' => $year,
+            'term' => $term,
+        ]);
+    }
+
+    public function reportCards(Request $request)
+    {
+        $query = ReportCard::query();
+
+        if ($request->filled('academic_year')) {
+            $query->where('academic_year', $request->academic_year);
+        }
+
+        if ($request->filled('term')) {
+            $query->where('term', $request->term);
+        }
+
+        $reportCards = $query->with('student', 'class')
+            ->paginate(15);
+
+        return view('admin.marks.report-cards', [
+            'reportCards' => $reportCards,
+            'years' => range(date('Y') - 5, date('Y')),
+            'terms' => [1, 2, 3],
+        ]);
+    }
+
+    public function generateReportCard($studentId, $year, $term)
+    {
+        $student = Student::findOrFail($studentId);
+        $marks = $student->marks()
+            ->where('academic_year', $year)
+            ->where('term', $term)
+            ->get();
+
+        if ($marks->isEmpty()) {
+            return back()->with('error', 'No marks found for this student, year, and term');
+        }
+
+        $reportCard = ReportCard::firstOrCreate(
+            [
+                'student_id' => $studentId,
+                'academic_year' => $year,
+                'term' => $term,
+            ],
+            [
+                'class_id' => $student->class_id,
+                'generated_at' => now(),
+            ]
+        );
+
+        return view('admin.marks.generate-report-card', [
+            'student' => $student,
+            'reportCard' => $reportCard,
+            'marks' => $marks,
+            'year' => $year,
+            'term' => $term,
+        ]);
+    }
+
+    public function downloadReportCard(ReportCard $reportCard)
+    {
+        $marks = $reportCard->getStudentMarks();
+
+        $data = [
+            'student' => $reportCard->student,
+            'marks' => $marks,
+            'reportCard' => $reportCard,
+            'totalPoints' => $reportCard->getTotalPoints(),
+            'overallGrade' => $reportCard->getOverallGrade(),
+            'ranking' => $reportCard->getClassRanking(),
+        ];
+
+        $pdf = PDF::loadView('admin.marks.report-card-pdf', $data);
+        return $pdf->download("report_card_{$reportCard->student->student_id}_{$reportCard->academic_year}_term_{$reportCard->term}.pdf");
+    }
+
+    private function calculateGrade($score)
+    {
+        if ($score >= 90) return 'A';
+        if ($score >= 80) return 'B';
+        if ($score >= 70) return 'C';
+        if ($score >= 60) return 'D';
+        if ($score >= 50) return 'E';
+        return 'F';
     }
 }
